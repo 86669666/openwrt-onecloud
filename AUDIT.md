@@ -62,6 +62,7 @@ wolfSSL 5.9.4 在上述 OpenWrt 提交中合入，发行说明列出高危 [CVE-
 24. **ImmortalWrt `automount` / `autosamba`**（提交 `305089f95180d4ab5206437b3527c7ed6cc46bc4`）的脚本里没有 URL、`curl` 或 `wget`。`sbwml/autocore-arm` 提交 `9b52f345ee2db331ce2fefcdcc50a9d6120c11a3` 的 `files/generic/090-autocore` 只在本地移动 LuCI 文件并重启 `rpcd`。
 25. **板级 DTS** `board/amlogic/files/arch/arm/boot/dts/amlogic/meson8b-onecloud.dts` 是 Thunder OneCloud 的硬件描述，作者标记为 hzy。MMC 补丁 `patches-6.12/903-add-dts-and-identify-emmc.patch` 调整 HS200/HS400 时序，PWM 补丁只改占空比读回。没有网络或凭证。
 26. **LuCI / firewall4 的其余补丁** 是界面、自定义 nft 文本和内核配置符号，不是下载器。`patch/target/linux/generic/hack-6.12/` 里一个补丁关掉 BTF 模块警告，另一个给 arm64 的 `/proc/cpuinfo` 加 model name；OneCloud 是 armv7，后者对本机无效果。
+27. **登录横幅里的 `Dave's Guitar`。** `openwrt-25.12` 与标签 v25.12.5 的 `package/base-files/files/etc/banner` 都有这几个字。引入提交是 `f919e7899d`（2026-03-03，说明为 “base-files: honoring Dave Täht with the OpenWrt 25.12”）。`main` 上同一文件没有这几个字。这是发行代号，不是外连。`sh/op.sh` 第 163–178 行会删掉官方横幅并写成 `by $OP_author`，只改显示，不改网络配置。
 
 ### 未逐行审计、因此不能标成「正常」的部分
 
@@ -75,9 +76,34 @@ wolfSSL 5.9.4 在上述 OpenWrt 提交中合入，发行说明列出高危 [CVE-
 - `board/amlogic/`：公开的 6.12 OneCloud 板级树，替代私有 `s805` 克隆。
 - 三个固件/工具链工作流不再使用 `PERSONAL_ACCESS_TOKEN`，不再推送到 `shiyu1314/6.12`。apk 工作流只上传 artifact。
 - Rust 的 `--ci false` 补丁按当前 `lang/rust/Makefile` 重放，否则 `sh/op.sh` 会在打补丁时退出。默认配置不编译 Rust。
+- `sh/op.sh` 给宿主机 `tools/elfutils` 加上 `--disable-demangler`。这台编译机的 `/usr/bin/cc` 是 Clang 18，elfutils 0.192 探测不到 `__cxa_demangle`。只影响宿主机工具，不进入固件。
 
 没有加入密钥，没有推送到 `shiyu1314/openwrt-onecloud`，没有改写历史。
 
 ## 4. 构建结果
 
-本节在固件编译结束后更新。目标是 OneCloud（`CONFIG_TARGET_amlogic_meson8b_DEVICE_thunder-onecloud`），配置为 `config/config-common`，不附加默认第三方插件。
+目标是 OneCloud（`CONFIG_TARGET_amlogic_meson8b_DEVICE_thunder-onecloud`），配置为 `config/config-common`，不附加默认第三方插件。OpenWrt 提交 `66673aad8f99e450f6ee2587254b1b2d19d45150`，内核 6.12.112。`version.buildinfo` 为 `r0-66673aa`。
+
+GitHub Actions 没有跑起来。本 fork 的 Actions 工作流列表是空的，启用 Actions 的 API 返回 403（`Resource not accessible by integration`）。没有添加密钥，没有创建 Release，也没有把固件提交进 git。下面的文件是这台编译机上的本地产物。
+
+| 文件 | 大小 | SHA-256 |
+| --- | --- | --- |
+| `openwrt-amlogic-meson8b-thunder-onecloud-ext4-emmc.img.gz` | 22,517,018 字节（解压后 671,088,640 字节，640 MiB） | `864dd157f7cab14464fb1f4a3cba4112e69d5b6a53c1673819b1f461fd430b61` |
+
+本地路径：
+
+- `/tmp/onecloud-artifacts/openwrt-amlogic-meson8b-thunder-onecloud-ext4-emmc.img.gz`
+- `/opt/cursor/artifacts/openwrt-amlogic-meson8b-thunder-onecloud-ext4-emmc.img.gz`
+
+同目录还有构建系统自己写的 `sha256sums`、`openwrt-amlogic-meson8b-thunder-onecloud.manifest` 和 `version.buildinfo`。`sha256sums` 里镜像那一行与上表一致。
+
+分区表（512 字节扇区）：第 1 分区类型 `0xc`，起始扇区 8192，65536 扇区（32 MiB，FAT 启动分区）；第 2 分区类型 `0x83`，起始扇区 81920，1,228,800 扇区（600 MiB，ext4 根文件系统）。只读挂载根文件系统后核对：
+
+- `etc/apk/repositories.d/distfeeds.list` 七行都是 `https://downloads.openwrt.org/releases/25.12-SNAPSHOT/.../packages.adb`。没有 `jkkk.cc.cd`。这个目标不是官方构建，这些 URL 上不一定有对应索引；设备不会因此去访问审计前的第三方源。
+- `etc/shadow` 第一行是 `root:::0:99999:7:::`，空密码，与第 12 条一致。
+- `etc/openwrt_release` 的 `DISTRIB_REVISION` 是 `by audit`，横幅同样是 `by audit`。这是本地构建把 `OP_author` 设成 `audit` 之后，`sh/op.sh` 第 167 和 177 行写入的署名。
+- 清单中的 `kernel` 版本是 `6.12.112`。根文件系统约占 41 MiB，其余是空余空间。
+
+编译机上的两处宿主机补丁没有进固件，也没有进本仓库：安装了 `libclang-rt-18-dev`（Clang 的 `-fprofile-generate` 需要 `libclang_rt.profile-x86_64.a`）；`feeds/packages/lang/python/python3/Makefile` 的宿主机参数改成 `--disable-optimizations`，因为 Clang 下 Python 3.13 的 PGO 测试失败。默认配置不把目标机 Python 装进镜像。
+
+没有把固件写到设备上。公开板级树不是上游私有的 `s805`，这次编译不能证明玩客云可以开机。
