@@ -69,6 +69,21 @@ sed -i 's/+luci-nginx \\$/+luci-nginx/' feeds/luci/collections/luci-light/Makefi
 
 sed -i 's/libustream-mbedtls/libustream-openssl/' include/target.mk
 
+# Ubuntu 24.04's libstdc++ fails elfutils' __cxa_demangle probe. The demangler
+# is only a host debug helper and is not part of the device image.
+if ! grep -q -- '--disable-demangler' tools/elfutils/Makefile; then
+	python3 - <<'PY'
+from pathlib import Path
+p = Path("tools/elfutils/Makefile")
+text = p.read_text()
+old = "\t--disable-nls \\\n"
+new = "\t--disable-nls \\\n\t--disable-demangler \\\n"
+if old not in text:
+    raise SystemExit("elfutils Makefile pattern missing")
+p.write_text(text.replace(old, new, 1))
+PY
+fi
+
 
 
 pushd feeds/luci
