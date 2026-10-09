@@ -1,5 +1,8 @@
 name: openwrt
 
+permissions:
+  contents: write
+
 on:
   repository_dispatch:
   workflow_dispatch:
@@ -32,7 +35,7 @@ on:
       CUSTOM_PLUGINS:
         description: '自定义插件名称，用空格分隔'
         required: false
-        default: 'luci-app-dockerman luci-theme-m3e luci-app-ttyd luci-app-diskman luci-app-hd-idle luci-app-momo luci-app-samba4 luci-app-openlist2'
+        default: ''
         type: string
 
 env:
@@ -53,7 +56,7 @@ jobs:
 
     steps: 
     - name: 检查分支
-      uses: actions/checkout@v4
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
     - name: 释放磁盘空间
       run: |
@@ -86,10 +89,12 @@ jobs:
 
     - name: 设置环境变量
       run: |
+        source sh/pins.env
         TAG="$(date +'%Y%m%d')-$(openssl rand -hex 3)"
         echo "tag=$TAG" >> $GITHUB_ENV
-        echo "REPO_URL=https://github.com/openwrt/openwrt" >> $GITHUB_ENV
-        echo "REPO_BRANCH=openwrt-25.12" >> $GITHUB_ENV
+        echo "REPO_URL=$OPENWRT_URL" >> $GITHUB_ENV
+        echo "REPO_BRANCH=$OPENWRT_LABEL" >> $GITHUB_ENV
+        echo "release_tag=$OPENWRT_LABEL" >> $GITHUB_ENV
         echo "OP_IP=${{ github.event.inputs.OP_IP }}" >> $GITHUB_ENV
         echo "OP_author=${{ github.event.inputs.OP_author }}" >> $GITHUB_ENV
         echo "OP_rootfs=${{ github.event.inputs.OP_rootfs }}" >> $GITHUB_ENV
@@ -100,32 +105,11 @@ jobs:
       working-directory: /workdir
       run: |
         df -hT $PWD
-        git clone $REPO_URL openwrt
-        ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
-        
-    - name: 切换分支
-      working-directory: ./openwrt
-      id: var
-      run: |
-        case $REPO_BRANCH in
-          openwrt-25.12)
-            _release_tag=$(git tag --sort=taggerdate --list 'v25.*' | tail -1)
-            git checkout $_release_tag
-            _prerelease=false
-            ;;
-          openwrt-24.10)
-            _release_tag=$(git tag --sort=taggerdate --list 'v24.*' | tail -1)
-            git checkout $_release_tag
-            _prerelease=false
-            ;;
-          *)
-            echo "Can't get local/upstream's branch/tags"
-            ;;
-        esac
-        echo "release_tag=$_release_tag" >> $GITHUB_ENV
+        PIN_KERNEL_CFG=1 "$GITHUB_WORKSPACE/sh/checkout-openwrt.sh" /workdir/openwrt
+        ln -sf /workdir/openwrt "$GITHUB_WORKSPACE/openwrt"
         
     - name: 取回缓存 staging_dir
-      uses: actions/cache@v4
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
       with:
         path: |
           openwrt/staging_dir
@@ -135,9 +119,9 @@ jobs:
             
     - name: patch修补
       run: |
-        [ -e patch ] && cp -rf patch/apk-tools/*.patch openwrt/package/system/apk/patches
-        curl -s https://raw.githubusercontent.com/immortalwrt/immortalwrt/master/config/Config-kernel.in > openwrt/config/Config-kernel.in
-        sed -i 's#https://git\.openwrt\.org/feed#https://github.com/openwrt#g; s#https://git\.openwrt\.org/project#https://github.com/openwrt#g' openwrt/feeds.conf.default
+        if compgen -G "patch/apk-tools/*.patch" > /dev/null; then
+          cp -f patch/apk-tools/*.patch openwrt/package/system/apk/patches/
+        fi
         cd openwrt
         find ./staging_dir/ -name '*' -exec touch {} \; >/dev/null 2>&1
         ./scripts/feeds update -a
@@ -158,32 +142,45 @@ jobs:
         
     - name: 添加玩客云
       run: |
-        git clone https://shiyu1314:${{ secrets.PERSONAL_ACCESS_TOKEN }}@github.com/shiyu1314/s805 -b 6.12 openwrt/target/linux/amlogic
+        rm -rf openwrt/target/linux/amlogic
+        cp -a board/amlogic openwrt/target/linux/amlogic
          
     - name: 加载自定义配置
       run: |
         [ -e files ] && mv files openwrt/files
-        cat <<EOF >>openwrt/.config
+        OP_rootfs="${OP_rootfs:-600}"
+        OP_IP="${OP_IP:-192.168.2.2}"
+        case "$OP_rootfs" in
+          ''|*[!0-9]*) echo "invalid OP_rootfs"; exit 1 ;;
+        esac
+        case "$OP_IP" in
+          ''|*[!0-9.]*) echo "invalid OP_IP"; exit 1 ;;
+        esac
+        cat >>openwrt/.config <<EOF
         CONFIG_TARGET_amlogic=y
         CONFIG_TARGET_amlogic_meson8b=y
         ${{ matrix.config }}
         CONFIG_TARGET_KERNEL_PARTSIZE=32
-        CONFIG_TARGET_ROOTFS_PARTSIZE=${{ github.event.inputs.OP_rootfs }}
+        CONFIG_TARGET_ROOTFS_PARTSIZE=${OP_rootfs}
         CONFIG_KERNEL_EXT4_FS_SECURITY=y
         # CONFIG_TARGET_ROOTFS_SQUASHFS is not set
         EOF
         
         [ -e config ] && cat config/config-common >> openwrt/.config
         
-        if [[ "${{ github.event.inputs.ENABLE_DHCP }}" == "false" ]]; then
+        if [ "${ENABLE_DHCP:-false}" != "true" ]; then
           rm -rf openwrt/files/etc/uci-defaults/dhcp-lan
-          sed -i "s/192.168.1.1/${{ github.event.inputs.OP_IP }}/" openwrt/package/base-files/files/bin/config_generate
+          sed -i "s/192.168.1.1/${OP_IP}/" openwrt/package/base-files/files/bin/config_generate
         fi
         
-        IFS=' ' read -r -a plugins <<< "${{ github.event.inputs.CUSTOM_PLUGINS }}"
-        for plugin in "${plugins[@]}"; do
-          echo "CONFIG_PACKAGE_${plugin}=y" >> openwrt/.config
-        done    
+        if [ -n "${CUSTOM_PLUGINS:-}" ]; then
+          for plugin in $CUSTOM_PLUGINS; do
+            case "$plugin" in
+              ''|*[!A-Za-z0-9._+-]*) echo "rejected plugin name: $plugin"; exit 1 ;;
+            esac
+            echo "CONFIG_PACKAGE_${plugin}=y" >> openwrt/.config
+          done
+        fi    
     
     - name: 下载编译依赖
       id: package
@@ -229,7 +226,7 @@ jobs:
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
 
     - name: 上传固件到Releases
-      uses: softprops/action-gh-release@v2.1.0
+      uses: softprops/action-gh-release@01570a1f39cb168c169c802c3bceb9e93fb10974 # v2.1.0
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
@@ -244,10 +241,11 @@ jobs:
            插件：${{ github.event.inputs.CUSTOM_PLUGINS }}
            定制作者：${{ github.event.inputs.OP_author }}
            扩容：sh 1.sh
-           默认密码：无
+           默认密码：未设置。首次登录 LuCI 后请立即设置 root 密码。
+           软件源：使用 OpenWrt 构建时生成的官方 feed，不预置第三方 apk 仓库。
 
     - name: 清理Releases
-      uses: dev-drprasad/delete-older-releases@v0.3.4
+      uses: dev-drprasad/delete-older-releases@dfbe6be2a006e9475dfcbe5b8d201f1824c2a9fe # v0.3.4
       with:
         keep_latest: 1
         delete_tags: true
