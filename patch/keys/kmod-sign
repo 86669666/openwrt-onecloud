@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
+# Sign an apk repository. The private key must be supplied at runtime.
+# Do not commit a signing key into this repository.
+set -euo pipefail
 
 TOP=$(pwd)
+KEY="${APK_PRIVATE_KEY:-}"
+
+if [ -z "$KEY" ] || [ ! -f "$KEY" ]; then
+	echo "APK_PRIVATE_KEY must point to a private key that is not stored in git" >&2
+	exit 1
+fi
 
 export PATH="$TOP/staging_dir/host/bin:$PATH"
 
@@ -11,20 +20,19 @@ ARCH_PACKAGES=$(awk -F'"' '/^CONFIG_TARGET_ARCH_PACKAGES=/ {print $2}' .config)
 [ -z "$ARCH_PACKAGES" ] && exit 0
 
 SIG() (
-    rm -f index.json packages.adb
-    apk mkndx \
-        --root $TOP \
-        --keys-dir $TOP \
-        --allow-untrusted \
-        --sign $TOP/private-key.pem \
-        --output packages.adb \
-        *.apk >/dev/null 2>&1
-    [ -f "$TOP/scripts/make-index-json.py" ] && apk adbdump --format json packages.adb | \
-        $TOP/scripts/make-index-json.py -f apk -a "$ARCH_PACKAGES" - > index.json
+	rm -f index.json packages.adb
+	apk mkndx \
+		--root "$TOP" \
+		--keys-dir "$(dirname "$KEY")" \
+		--sign "$KEY" \
+		--output packages.adb \
+		*.apk >/dev/null 2>&1
+	[ -f "$TOP/scripts/make-index-json.py" ] && apk adbdump --format json packages.adb | \
+		$TOP/scripts/make-index-json.py -f apk -a "$ARCH_PACKAGES" - > index.json
 )
 
-[ -z $1 ] && exit 1
+[ -z "${1:-}" ] && exit 1
 
-cd $1
+cd "$1"
 
 SIG

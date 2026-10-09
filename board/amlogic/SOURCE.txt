@@ -1,0 +1,9 @@
+Source: https://github.com/rmoyulong/OneCloud_OpenWrt
+Commit: ece61123be9f79107f5fd21448cdb8a10d8902b3
+Path: lede6.12/target/linux/amlogic
+Retrieved: 2026-10-09
+
+shiyu1314/s805 branch 6.12 is not publicly readable (GitHub returns 404 without
+the author's personal access token). This fork does not add that token.
+The image recipe token "onecloud" in the upstream file was not a defined
+Build/ step, so it was removed here. No other files were modified.

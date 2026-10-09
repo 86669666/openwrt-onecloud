@@ -24,7 +24,7 @@ jobs:
 
     steps: 
     - name: 检查分支
-      uses: actions/checkout@v4
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
     - name: 释放磁盘空间
       run: |
@@ -57,43 +57,25 @@ jobs:
 
     - name: 设置环境变量
       run: |
+        source sh/pins.env
         TAG="$(date +'%Y%m%d')-$(openssl rand -hex 3)"
         echo "tag=$TAG" >> $GITHUB_ENV
-        echo "REPO_URL=https://github.com/openwrt/openwrt" >> $GITHUB_ENV
-        echo "REPO_BRANCH=openwrt-25.12" >> $GITHUB_ENV
+        echo "REPO_URL=$OPENWRT_URL" >> $GITHUB_ENV
+        echo "REPO_BRANCH=$OPENWRT_LABEL" >> $GITHUB_ENV
+        echo "release_tag=$OPENWRT_LABEL" >> $GITHUB_ENV
 
     - name: 克隆源代码
       working-directory: /workdir
       run: |
         df -hT $PWD
-        git clone $REPO_URL openwrt
-        ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
-        
-    - name: 切换分支
-      working-directory: ./openwrt
-      id: var
-      run: |
-        case $REPO_BRANCH in
-          openwrt-25.12)
-            _release_tag=$(git tag --sort=taggerdate --list 'v25.*' | tail -1)
-            git checkout $_release_tag
-            _prerelease=false
-            ;;
-          openwrt-24.10)
-            _release_tag=$(git tag --sort=taggerdate --list 'v24.*' | tail -1)
-            git checkout $_release_tag
-            _prerelease=false
-            ;;
-          *)
-            echo "Can't get local/upstream's branch/tags"
-            ;;
-        esac
-        echo "release_tag=$_release_tag" >> $GITHUB_ENV
+        "$GITHUB_WORKSPACE/sh/checkout-openwrt.sh" /workdir/openwrt
+        ln -sf /workdir/openwrt "$GITHUB_WORKSPACE/openwrt"
             
     - name: patch修补
       run: |
-        [ -e patch ] && cp -rf patch/apk-tools/*.patch openwrt/package/system/apk/patches
-        sed -i 's#https://git\.openwrt\.org/feed#https://github.com/openwrt#g; s#https://git\.openwrt\.org/project#https://github.com/openwrt#g' openwrt/feeds.conf.default
+        if compgen -G "patch/apk-tools/*.patch" > /dev/null; then
+          cp -f patch/apk-tools/*.patch openwrt/package/system/apk/patches/
+        fi
         cd openwrt
         ./scripts/feeds update -a
         cd .. 
@@ -113,7 +95,8 @@ jobs:
         
     - name: 添加玩客云
       run: |
-        git clone https://shiyu1314:${{ secrets.PERSONAL_ACCESS_TOKEN }}@github.com/shiyu1314/s805 -b 6.12 openwrt/target/linux/amlogic
+        rm -rf openwrt/target/linux/amlogic
+        cp -a board/amlogic openwrt/target/linux/amlogic
          
     - name: 加载自定义配置
       run: |
@@ -160,7 +143,7 @@ jobs:
  
 
     - name: 缓存 staging_dir
-      uses: actions/cache@v4
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
       with:
         path: |
           openwrt/staging_dir
