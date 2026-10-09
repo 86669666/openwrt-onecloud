@@ -84,7 +84,11 @@ wolfSSL 5.9.4 在上述 OpenWrt 提交中合入，发行说明列出高危 [CVE-
 
 目标是 OneCloud（`CONFIG_TARGET_amlogic_meson8b_DEVICE_thunder-onecloud`），配置为 `config/config-common`，不附加默认第三方插件。OpenWrt 提交 `66673aad8f99e450f6ee2587254b1b2d19d45150`，内核 6.12.112。`version.buildinfo` 为 `r0-66673aa`。
 
-GitHub Actions 没有跑起来。本 fork 的 Actions 工作流列表是空的，启用 Actions 的 API 返回 403（`Resource not accessible by integration`）。没有添加密钥，没有创建 Release，也没有把固件提交进 git。下面的文件是这台编译机上的本地产物。
+GitHub Actions 没有跑起来。本 fork 的 Actions 工作流列表是空的，启用 Actions 的 API 返回 403（`Resource not accessible by integration`）。固件没有提交进 git。镜像后来作为本仓库的预发布附件上传，标签 `onecloud-25.12-audit-66673aad` 指向分支 `cursor/onecloud-audit-update-8242` 的 `b31ed39`。
+
+- 发布页：https://github.com/86669666/openwrt-onecloud/releases/tag/onecloud-25.12-audit-66673aad
+- 镜像：https://github.com/86669666/openwrt-onecloud/releases/download/onecloud-25.12-audit-66673aad/openwrt-amlogic-meson8b-thunder-onecloud-ext4-emmc.img.gz
+- 校验文件：https://github.com/86669666/openwrt-onecloud/releases/download/onecloud-25.12-audit-66673aad/sha256sums.txt
 
 | 文件 | 大小 | SHA-256 |
 | --- | --- | --- |
