@@ -24,7 +24,7 @@ jobs:
 
     steps: 
     - name: 检查分支
-      uses: actions/checkout@v4
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
     - name: 释放磁盘空间
       run: |
@@ -57,41 +57,22 @@ jobs:
 
     - name: 设置环境变量
       run: |
+        source sh/pins.env
         TAG="$(date +'%Y%m%d')-$(openssl rand -hex 3)"
         echo "tag=$TAG" >> $GITHUB_ENV
-        echo "REPO_URL=https://github.com/openwrt/openwrt" >> $GITHUB_ENV
-        echo "REPO_BRANCH=openwrt-25.12" >> $GITHUB_ENV
+        echo "REPO_URL=$OPENWRT_URL" >> $GITHUB_ENV
+        echo "REPO_BRANCH=$OPENWRT_LABEL" >> $GITHUB_ENV
+        echo "release_tag=$OPENWRT_LABEL" >> $GITHUB_ENV
 
     - name: 克隆源代码
       working-directory: /workdir
       run: |
         df -hT $PWD
-        git clone $REPO_URL openwrt
-        ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
-        
-    - name: 切换分支
-      working-directory: ./openwrt
-      id: var
-      run: |
-        case $REPO_BRANCH in
-          openwrt-25.12)
-            _release_tag=$(git tag --sort=taggerdate --list 'v25.*' | tail -1)
-            git checkout $_release_tag
-            _prerelease=false
-            ;;
-          openwrt-24.10)
-            _release_tag=$(git tag --sort=taggerdate --list 'v24.*' | tail -1)
-            git checkout $_release_tag
-            _prerelease=false
-            ;;
-          *)
-            echo "Can't get local/upstream's branch/tags"
-            ;;
-        esac
-        echo "release_tag=$_release_tag" >> $GITHUB_ENV
+        PIN_KERNEL_CFG=1 "$GITHUB_WORKSPACE/sh/checkout-openwrt.sh" /workdir/openwrt
+        ln -sf /workdir/openwrt "$GITHUB_WORKSPACE/openwrt"
         
     - name: 取回缓存 staging_dir
-      uses: actions/cache@v4
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
       with:
         path: |
           openwrt/staging_dir
@@ -101,9 +82,9 @@ jobs:
             
     - name: patch修补
       run: |
-        [ -e patch ] && cp -rf patch/apk-tools/*.patch openwrt/package/system/apk/patches
-        curl -s https://raw.githubusercontent.com/immortalwrt/immortalwrt/master/config/Config-kernel.in > openwrt/config/Config-kernel.in
-        sed -i 's#https://git\.openwrt\.org/feed#https://github.com/openwrt#g; s#https://git\.openwrt\.org/project#https://github.com/openwrt#g' openwrt/feeds.conf.default
+        if compgen -G "patch/apk-tools/*.patch" > /dev/null; then
+          cp -f patch/apk-tools/*.patch openwrt/package/system/apk/patches/
+        fi
         cd openwrt
         find ./staging_dir/ -name '*' -exec touch {} \; >/dev/null 2>&1
         ./scripts/feeds update -a
@@ -111,7 +92,6 @@ jobs:
         [ -e patch ] && cp -rf patch/target openwrt
         [ -e patch ] && cp -rf patch/luci/*.patch openwrt/feeds/luci
         [ -e patch ] && cp -rf patch/diy/*.patch openwrt
-        [ -e patch ] && cp -rf patch/keys/* openwrt
         
     - name: 加载自定义脚本
       run: |
@@ -125,7 +105,8 @@ jobs:
         
     - name: 添加玩客云
       run: |
-        git clone https://shiyu1314:${{ secrets.PERSONAL_ACCESS_TOKEN }}@github.com/shiyu1314/s805 -b 6.12 openwrt/target/linux/amlogic
+        rm -rf openwrt/target/linux/amlogic
+        cp -a board/amlogic openwrt/target/linux/amlogic
          
     - name: 加载自定义配置
       run: |
@@ -186,25 +167,10 @@ jobs:
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
         
         
-    - name: 签名
-      run: |
-        cd openwrt
-        bash kmod-sign bin/packages/arm_cortex-a5_neon-vfpv4/base
-        bash kmod-sign bin/packages/arm_cortex-a5_neon-vfpv4/kmod
-        bash kmod-sign bin/packages/arm_cortex-a5_neon-vfpv4/luci
-        bash kmod-sign bin/packages/arm_cortex-a5_neon-vfpv4/packages
-
-
-    - name: 上传apk
-      env:
-        GITHUB_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
-      run: |
-        cd openwrt/bin/packages
-        git init
-        git config --local user.name "github-actions[bot]"
-        git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
-        git add .
-        git commit -m "${{ env.tag }}"
-        git branch -M main
-        git remote add origin https://github-action:$GITHUB_TOKEN@github.com/shiyu1314/6.12
-        git push -u origin main --force
+    - name: 上传 apk 构建产物
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      with:
+        name: apk-packages-${{ env.tag }}
+        path: openwrt/bin/packages
+        if-no-files-found: error
+        retention-days: 14

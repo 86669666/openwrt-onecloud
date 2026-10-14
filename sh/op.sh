@@ -1,31 +1,39 @@
 #!/bin/bash
 
 set -x
+set -euo pipefail
 
-function git_sparse_clone() {
-  branch="$1" repourl="$2" && shift 2
-  git clone --depth=1 -b $branch --single-branch --filter=blob:none --sparse $repourl
-  repodir=$(echo $repourl | awk -F '/' '{print $(NF)}')
-  cd $repodir && git sparse-checkout set $@
-  mv -f $@ ../
-  cd .. && rm -rf $repodir
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/pins.env"
+
+OP_author="$(printf '%s' "${OP_author:-openwrt-onecloud}" | tr -cd 'A-Za-z0-9._-')"
+OP_author="${OP_author:-openwrt-onecloud}"
+
+pin_clone() {
+	local dest="$1" url="$2" commit="$3"
+	shift 3
+	rm -rf "$dest"
+	git init "$dest"
+	git -C "$dest" remote add origin "$url"
+	if [ "$#" -gt 0 ]; then
+		git -C "$dest" sparse-checkout init --cone
+		git -C "$dest" sparse-checkout set "$@"
+	fi
+	git -C "$dest" fetch --depth 1 origin "$commit"
+	git -C "$dest" checkout --detach FETCH_HEAD
+	rm -rf "$dest/.git"
 }
 
+pin_clone /tmp/immortalwrt-pin https://github.com/immortalwrt/immortalwrt.git "$IMMORTAL_REV" \
+	package/emortal/automount package/emortal/autosamba
+mkdir -p package
+cp -a /tmp/immortalwrt-pin/package/emortal/automount /tmp/immortalwrt-pin/package/emortal/autosamba package/
+rm -rf /tmp/immortalwrt-pin
 
-
-git_sparse_clone master https://github.com/immortalwrt/immortalwrt package/emortal/automount
-
-git_sparse_clone master https://github.com/immortalwrt/immortalwrt package/emortal/autosamba
-
-cp -rf {automount,autosamba} package
-
-
-git clone https://github.com/sbwml/autocore-arm package/autocore-arm -b openwrt-25.12 --depth 1
-
-rm -rf package/autocore-arm/.git
-
-git clone -b packages --depth 1 --single-branch https://github.com/shiyu1314/openwrt-feeds package/xd
-git clone -b porxy --depth 1 --single-branch https://github.com/shiyu1314/openwrt-feeds package/porxy
+pin_clone package/autocore-arm https://github.com/sbwml/autocore-arm.git "$AUTOCORE_REV"
+pin_clone package/xd https://github.com/shiyu1314/openwrt-feeds.git "$FEEDS_PACKAGES_REV"
+pin_clone package/porxy https://github.com/shiyu1314/openwrt-feeds.git "$FEEDS_PROXY_REV"
 
 
 rm -rf feeds/luci/applications/{luci-app-dockerman,luci-app-samba4,luci-app-aria2}
@@ -61,6 +69,21 @@ sed -i 's/+luci-nginx \\$/+luci-nginx/' feeds/luci/collections/luci-light/Makefi
 
 sed -i 's/libustream-mbedtls/libustream-openssl/' include/target.mk
 
+# Ubuntu 24.04's libstdc++ fails elfutils' __cxa_demangle probe. The demangler
+# is only a host debug helper and is not part of the device image.
+if ! grep -q -- '--disable-demangler' tools/elfutils/Makefile; then
+	python3 - <<'PY'
+from pathlib import Path
+p = Path("tools/elfutils/Makefile")
+text = p.read_text()
+old = "\t--disable-nls \\\n"
+new = "\t--disable-nls \\\n\t--disable-demangler \\\n"
+if old not in text:
+    raise SystemExit("elfutils Makefile pattern missing")
+p.write_text(text.replace(old, new, 1))
+PY
+fi
+
 
 
 pushd feeds/luci
@@ -72,7 +95,6 @@ pushd feeds/luci
     patch -p1 < 0006-luci-mod-system-mounts-add-docker-directory-mount-po.patch
     patch -p1 < 0007-luci-mod-system-add-ucitrack-luci-mod-system-zram.js.patch
     patch -p1 < 0004-luci-add-firewall-add-custom-nft-rule-support.patch
-    patch -p1 < 0008-luci-app-package-manager-support-installing-uploaded.patch
 popd
 
 
@@ -84,26 +106,26 @@ patch -p1 --no-backup-if-mismatch < 001-rust-disable-ci-mode.patch
 
 # fstools
 rm -rf package/system/fstools
-git clone https://github.com/sbwml/package_system_fstools -b openwrt-25.12 package/system/fstools
+pin_clone package/system/fstools https://github.com/sbwml/package_system_fstools.git "$FSTOOLS_REV"
 # util-linux
 rm -rf package/utils/util-linux
-git clone https://github.com/sbwml/package_utils_util-linux -b openwrt-25.12 package/utils/util-linux
+pin_clone package/utils/util-linux https://github.com/sbwml/package_utils_util-linux.git "$UTIL_LINUX_REV"
 
 # nghttp3
 rm -rf feeds/packages/libs/nghttp3
-git clone https://github.com/sbwml/package_libs_nghttp3 package/libs/nghttp3
+pin_clone package/libs/nghttp3 https://github.com/sbwml/package_libs_nghttp3.git "$NGHTTP3_REV"
 
 # ngtcp2
 rm -rf feeds/packages/libs/ngtcp2
-git clone https://github.com/sbwml/package_libs_ngtcp2 package/libs/ngtcp2
+pin_clone package/libs/ngtcp2 https://github.com/sbwml/package_libs_ngtcp2.git "$NGTCP2_REV"
 
-# curl - fix passwall `time_pretransfer` check
+# curl - third-party replacement, pinned. Used by passwall's time_pretransfer check.
 rm -rf feeds/packages/net/curl
-git clone https://github.com/sbwml/feeds_packages_net_curl feeds/packages/net/curl
+pin_clone feeds/packages/net/curl https://github.com/sbwml/feeds_packages_net_curl.git "$CURL_REV"
 
-# nginx - latest version
+# nginx - third-party replacement, pinned
 rm -rf feeds/packages/net/nginx
-git clone https://github.com/sbwml/feeds_packages_net_nginx feeds/packages/net/nginx -b openwrt-25.12
+pin_clone feeds/packages/net/nginx https://github.com/sbwml/feeds_packages_net_nginx.git "$NGINX_REV"
 sed -i 's/procd_set_param stdout 1/procd_set_param stdout 0/g;s/procd_set_param stderr 1/procd_set_param stderr 0/g' feeds/packages/net/nginx/files/nginx.init
 
 # nginx - ubus
@@ -129,17 +151,16 @@ sed -i 's#20) \* 1000#60) \* 1000#g' feeds/luci/modules/luci-base/htdocs/luci-st
 sed -i '/<br \/>/d' feeds/luci/modules/luci-compat/luasrc/view/cbi/full_valuefooter.htm
 
 
-#golang 26.x
+# golang 26.x replacement, pinned
 rm -rf feeds/packages/lang/golang
-git clone https://github.com/sbwml/packages_lang_golang -b 26.x feeds/packages/lang/golang
+pin_clone feeds/packages/lang/golang https://github.com/sbwml/packages_lang_golang.git "$GOLANG_REV"
 
-./scripts/feeds update -a
+# Feeds were already fetched from the pinned feeds.conf.default.
+# Do not update again: a second update resets the local feed patches above.
 ./scripts/feeds install -a
 
 
-sed -i 's|/bin/login|/bin/login -f root|g' feeds/packages/utils/ttyd/files/ttyd.config
-
-sudo rm -rf package/base-files/files/etc/banner
+rm -rf package/base-files/files/etc/banner
 
 sed -i "s/%D %V %C/%D %V $(TZ=UTC-8 date +%Y.%m.%d)/" package/base-files/files/etc/openwrt_release
 
